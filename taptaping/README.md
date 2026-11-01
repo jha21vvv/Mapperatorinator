@@ -1,0 +1,55 @@
+# taptaping 4레인 AI 악보 — 작업 폴더
+
+Mapperatorinator 를 taptaping(4레인 리듬게임)용으로 쓰기 위한 도구와 실험 기록.
+게임 쪽 규격: `taptaping_gamemode` 의 `NoteData`(MusicScore.cs), `ChartExportData`(ChartExportData.cs).
+
+## 파일
+
+| 파일 | 하는 일 |
+|---|---|
+| `osu_to_taptaping.py` | 4K .osu → taptaping `ChartExportData` JSON (표준 라이브러리만 사용) |
+| `tests/` | 변환기 단위 테스트 — `python -m unittest discover -s taptaping/tests` |
+| `export_onnx.py` | 모델을 encoder/decoder ONNX 로 내보내고 int8 양자화·PyTorch 대조 (`PYTHONPATH=.` 필요) |
+
+Unity 쪽 짝: `taptaping_gamemode/Assets/Base/Scripts/App/AIChart/OsuManiaImporter.cs`
+(+ 에디터 창 `TapTaping > AI Chart > .osu 4K 가져오기`). Python 판과 같은 입력에 같은 결과가 나오는 것을 확인함.
+
+## 4K 악보 생성 (원본 모델)
+
+```bash
+python inference.py -cn v32-mini audio_path=song.mp3 output_path=out gamemode=3 keycount=4 difficulty=3.0 hold_note_ratio=0.15
+python taptaping/osu_to_taptaping.py out/*.osu -o chart.json --fill-missing
+```
+
+## 실험 기록 (2026-11-01, CPU 4코어 클라우드)
+
+### 모델 구조 — v32-mini `gamemode=3` (mania 전용 체크포인트)
+- 파라미터 5,580만 개, fp32 223MB. Whisper-base 구조(인코더 6층 + 디코더 6층, d=512), RoPE.
+- 입력 어휘 12,505개 중 7,605개가 매퍼 ID 토큰 → 입력 임베딩(640만 파라미터)의 대부분. 4K 전용이면 잘라낼 수 있음.
+- 입력: 16kHz, n_fft 1024, hop 128, 멜 128개(20~8000Hz, HTK), log1p. 창 하나 = 멜 2048프레임(약 16.4초) → 인코더 출력 1024.
+- 주의: 생성할 때 **박자(timing)는 기본 모델(전 모드 공용)이, 노트는 mania 모델이** 만든다 → 모델이 2개 필요.
+
+### 속도 (PyTorch, CPU 4코어)
+- 40초 구간 생성: 약 30초 (모델 로딩 제외).
+
+### ONNX 내보내기 결과 (`export_onnx.py`)
+| 파일 | 크기 | 정확도 (PyTorch 대비) |
+|---|---|---|
+| encoder fp32 | 79.7MB | 오차 2e-6 |
+| decoder fp32 (KV 캐시 없음) | 135.1MB | 다음 토큰 100% 일치 |
+| encoder int8 (ORT 동적 양자화) | 20.2MB | 오차 0.13 |
+| decoder int8 (ORT 동적 양자화) | 34.2MB | **다음 토큰 31% 일치 — 못 씀** |
+
+- 내보내려면 `nn.RMSNorm` 을 기본 연산으로 풀어야 함 (opset 17 미지원) — 스크립트가 자동으로 교체, 오차 1e-7.
+- `attn_implementation="eager"` 는 이 모델에서 깨져 있음 (마스크 None) → `sdpa` 로 내보냄.
+
+### 가중치 양자화 시뮬레이션 (계산은 float, 가중치만 줄임 — Sentis 방식)
+| 방식 | 다음 토큰 일치 |
+|---|---|
+| fp16 | 100% |
+| uint8 텐서 단위 | 7.8% |
+| uint8 행 단위 | 87.5% |
+
+- 망가지는 주범은 **입력 임베딩(decoder_embedder)** — 이것만 양자화해도 4.7%. 그 외 층은 70~94%.
+- 결론: 지금 모델 그대로면 **fp16(약 110MB/모델)이 안전선**. 더 줄이려면 임베딩은 fp16 유지 + 매퍼 토큰 제거 + 나머지 행 단위 int8, 또는 작은 모델 학습(증류) 필요.
+- 위 수치는 무작위 입력 기준. 실제 곡으로 생성 품질 비교는 다음 단계.
