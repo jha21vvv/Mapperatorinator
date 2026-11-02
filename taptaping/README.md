@@ -69,3 +69,20 @@ python taptaping/osu_to_taptaping.py out/*.osu -o chart.json --fill-missing
 - 전체 ③ 은 박자가 나빠짐: 엉뚱한 BPM 박자선 평균 7.3개 (①② 1.3개), 박자선 37개 (19개). 4.5 난이도 음악에 맞는 노트 86% (최저 77%).
 - librosa 박 추적은 박을 약 50ms 늦게 잡음 → `--ref-shift-ms 50` 으로 보정.
 - 모든 설정(기준 포함)에서 10~30초 빈 구간이 가끔 생김 — 주로 템포가 흔들리는 20~55초, 150~175초 부근. 속도 개선과 무관한 모델 특성.
+
+## 기기용 생성 (Unity) — 2026-11-02
+
+모델 파일 만들기: `bash taptaping/export_all.sh 출력폴더 아무오디오.mp3` → Unity 메뉴 `TapTaping > AI Chart > 모델 변환` 으로 fp16 .sentis.
+
+| 파일 | 하는 일 |
+|---|---|
+| `export_kv.py` | KV 캐시 디코더 + 교차 K/V 를 미리 계산하는 인코더 ONNX (PyTorch 대비 로짓 오차 < 1e-3) |
+| `mini/mapper_mini.py` | torch 없는 numpy+ONNX 참조 구현 (C# 이식 설계도) |
+| `mini/verify_mini.py` | 원본 기록 재연 검증 (프롬프트·박 이벤트·박자선·노트 전부 일치) |
+| `csharp_test/` | Unity C# 코드를 mono 로 같은 방식 검증 + 토큰 확률 비교 |
+
+### 실측 (클라우드 CPU 4코어, ONNX Runtime, Track01 3분 19초)
+- 토큰당: 노트 모델 3.6ms, 박자 모델 5.0ms (PyTorch generate 약 19ms 의 1/5)
+- 4개 난이도 전체: **131초** (박자 30초 + 노트 101초) — PyTorch 혼합 ③ 396초의 1/3
+- 품질: 노트 지표는 PyTorch 판과 시드 편차 안에서 같음. 박자선 수는 시드 6개 비교에서 ONNX 20~31개 / 원본 20~31개로 같은 분포.
+- 다음 토큰 확률분포: 원본 HF 처리기와 차이 < 1e-6 (Python), < 3e-6 (C#)
