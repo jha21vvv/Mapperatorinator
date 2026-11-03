@@ -56,7 +56,11 @@ def score(beats, ref):
         if len(vv) >= 4:
             # 후보 박 쪽에서 본 일치 (후보 박이 기준 격자 위에 있는가) — 두 배·절반 템포 허용
             oct_best = max(oct_best, float(np.mean(np.abs(nearest(vv, b[(b >= lo) & (b <= hi)])) <= 0.03)))
+    near = d[np.abs(d) <= 0.07]
+    off = float(np.median(near)) if len(near) else 0.0
+    d_al = nearest(b + off, r)  # 일정한 밀림(고정 보정값 하나로 고칠 수 있는 부분)을 빼고 다시
     return {
+        "hit30_aligned%": round(float(np.mean(np.abs(d_al) <= 0.03)) * 100, 1),
         "tempo_ratio": round(float(np.median(np.diff(r)) / np.median(np.diff(b))), 3),
         "hit30%": round(float(np.mean(np.abs(d) <= 0.03)) * 100, 1),
         "hit30_oct%": round(oct_best * 100, 1),
@@ -144,8 +148,8 @@ def main():
         if not rows:
             continue
         print(f"\n## 기준: {kind} 박자선 ({len(rows)}곡)")
-        print("| 방법 | 템포 맞음(±3%) | 두배/절반 | 기타(4:3 등) | hit30% 평균 | hit30_oct% 평균 | 밀림 중앙(ms) | 초/곡 |")
-        print("|---|---|---|---|---|---|---|---|")
+        print("| 방법 | 템포 맞음(±3%) | 두배/절반 | 기타(4:3 등) | hit30% 평균 | 밀림 보정 후 hit30% | hit30_oct% 평균 | 밀림 중앙(ms) | 초/곡 |")
+        print("|---|---|---|---|---|---|---|---|---|")
         for m in methods:
             ms = [r[m] for r in rows if r.get(m)]
             if not ms:
@@ -155,6 +159,7 @@ def main():
             other = len(ms) - ok - octv
             offs = [x["offset_ms"] for x in ms if x["offset_ms"] is not None]
             print(f"| {m} | {ok}/{len(ms)} | {octv} | {other} | {np.mean([x['hit30%'] for x in ms]):.1f} | "
+                  f"{np.mean([x['hit30_aligned%'] for x in ms]):.1f} | "
                   f"{np.mean([x['hit30_oct%'] for x in ms]):.1f} | {np.median(offs) if offs else '-'} | "
                   f"{np.mean([x['sec'] for x in ms]):.1f} |")
 
