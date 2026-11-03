@@ -69,9 +69,24 @@ def score(beats, ref):
 
 
 _bt = {}
+_wav_cache = {}
+
+
+def as_wav(path):
+    """opus 등은 ffmpeg 로 wav 로 바꿔서 넘긴다 (soundfile 이 일부 opus 를 못 읽음)"""
+    path = Path(path)
+    if path.suffix.lower() in (".wav", ".mp3"):
+        return path
+    if path not in _wav_cache:
+        import subprocess, tempfile
+        tmp = Path(tempfile.gettempdir()) / f"beat_eval_{path.stem}.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-ac", "1", "-ar", "22050", str(tmp)], check=True)
+        _wav_cache[path] = tmp
+    return _wav_cache[path]
 
 
 def run_method(name, path):
+    path = as_wav(path)
     t = time.perf_counter()
     if name.startswith("beat_this"):
         ck = name.split(":")[1]
@@ -135,7 +150,12 @@ def main():
     for kind, path, ref, title in items:
         row = {"ref": kind, "song": title[:40], "ref_bpm": round(60 / float(np.median(np.diff(ref))), 1)}
         for m in methods:
-            beats, sec = run_method(m, path)
+            try:
+                beats, sec = run_method(m, path)
+            except Exception as e:  # 곡 하나 실패해도 계속
+                print(f"  실패 {m} {title}: {e}", flush=True)
+                row[m] = None
+                continue
             row[m] = score(beats, ref)
             if row[m] is not None:
                 row[m]["sec"] = round(sec, 1)
