@@ -124,13 +124,14 @@ def f1(pred, ref, tol=1):
 
 
 def timing_f1(pred, ref, tol=1):
-    """레인 무시, 시간 위치만 F1 (GOCT 논문 지표와 비슷)"""
+    """레인 무시, 시간 위치만 F1 (GOCT 논문 지표와 비슷). 같은 칸의 동시 노트는 하나로 봄."""
     pp = sorted({p for p, _c in pred})
     rr = sorted({p for p, _c in ref})
-    j, tp = 0, 0
-    used = set()
+    used, tp, j = set(), 0, 0
     for p in pp:
-        for q in rr[max(0, j - 3): j + 50]:
+        while j < len(rr) and rr[j] < p - tol:
+            j += 1
+        for q in rr[j: j + 3]:
             if abs(q - p) <= tol and q not in used:
                 used.add(q)
                 tp += 1
